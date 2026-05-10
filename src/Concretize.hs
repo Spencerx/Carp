@@ -962,11 +962,15 @@ concreteDeleteTakePtr :: TypeEnv -> Env -> [(String, Ty)] -> Template
 concreteDeleteTakePtr typeEnv env members =
   Template
     (FuncTy [PointerTy (VarTy "p")] UnitTy StaticLifetimeTy)
-    (const (toTemplate "void $NAME($p* p)"))
+    -- Lambda env destructors are invoked through ((void(*)(void*)) f.delete)(f.env);
+    -- emit the C signature with void* and re-bind the typed pointer inside so the
+    -- function-pointer call type matches the function's actual type.
+    (const (toTemplate "void $NAME(void* p_raw)"))
     ( const
         ( toTemplate $
             unlines
               [ "$DECL {",
+                "    $p* p = p_raw;",
                 joinLines (map (memberDeletionGeneral "->" typeEnv env) members),
                 "}"
               ]
@@ -1010,7 +1014,9 @@ concreteCopyPtr :: TypeEnv -> Env -> [(String, Ty)] -> Template
 concreteCopyPtr typeEnv env memberPairs =
   Template
     (FuncTy [RefTy (VarTy "p") (VarTy "q")] (VarTy "p") StaticLifetimeTy)
-    (const (toTemplate "$p* $NAME($p* pRef)"))
+    -- Lambda env copiers are invoked through ((void*(*)(void*)) ref->copy)(ref->env);
+    -- emit the C signature with void* and re-bind the typed pointer inside.
+    (const (toTemplate "void* $NAME(void* pRef_raw)"))
     (const (tokensForCopyPtr typeEnv env memberPairs))
     ( \_ ->
         concatMap
@@ -1044,6 +1050,7 @@ tokensForCopyPtr typeEnv env memberPairs =
   toTemplate $
     unlines
       [ "$DECL {",
+        "    $p* pRef = pRef_raw;",
         "    $p* copy = CARP_MALLOC(sizeof(*pRef));",
         "    *copy = *pRef;",
         joinLines (map (memberCopyPtr typeEnv env) memberPairs),
